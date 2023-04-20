@@ -422,8 +422,9 @@ int process_http_response(struct openconnect_info *vpninfo, int connect,
 		char clen_buf[16];
 		/* ... else, chunked */
 		while ((i = vpninfo->ssl_gets(vpninfo, clen_buf, sizeof(clen_buf)))) {
+			char *endp = NULL;
 			int lastchunk = 0;
-			long chunklen;
+			unsigned long chunklen;
 
 			if (i < 0) {
 				vpn_progress(vpninfo, PRG_ERR,
@@ -431,16 +432,18 @@ int process_http_response(struct openconnect_info *vpninfo, int connect,
 				ret = i;
 				goto err;
 			}
-			chunklen = strtol(clen_buf, NULL, 16);
+			chunklen = strtoul(clen_buf, &endp, 16);
+			if (*endp) {
+				/* XX: Anything other than a positive hexadecimal integer followed by EOL is an error. */
+				vpn_progress(vpninfo, PRG_ERR,
+					     _("Error in chunked decoding. Expected hexadecimal chunk length, got: '%s'\n"),
+					     clen_buf);
+				goto err;
+			}
 			if (!chunklen) {
+				/* Received /0?\r?\n/, indicating last chunk */
 				lastchunk = 1;
 				goto skip;
-			}
-			if (chunklen < 0) {
-				vpn_progress(vpninfo, PRG_ERR,
-					     _("HTTP chunk length is negative (%ld)\n"), chunklen);
-				ret = -EINVAL;
-				goto err;
 			}
 			if (chunklen >= INT_MAX) {
 				vpn_progress(vpninfo, PRG_ERR,
